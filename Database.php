@@ -13,10 +13,18 @@ class Database
     public static function connect(): PDO
     {
         if (self::$connection === null) {
-            $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
-                self::$host, self::$port, self::$name);
+            $localConf = __DIR__ . '/config.server.php';
+            if (file_exists($localConf)) require_once $localConf;
 
-            self::$connection = new PDO($dsn, self::$user, self::$pass, [
+            $host = (defined('DB_HOST') ? DB_HOST : null) ?: getenv('DB_HOST') ?: self::$host;
+            $name = (defined('DB_NAME') ? DB_NAME : null) ?: getenv('DB_NAME') ?: self::$name;
+            $user = (defined('DB_USER') ? DB_USER : null) ?: getenv('DB_USER') ?: self::$user;
+            $pass = (defined('DB_PASS') ? DB_PASS : null) ?: getenv('DB_PASS') ?: self::$pass;
+
+            $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
+                $host, self::$port, $name);
+
+            self::$connection = new PDO($dsn, $user, $pass, [
                 PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             ]);
