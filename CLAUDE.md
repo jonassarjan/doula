@@ -4,10 +4,68 @@
 An online **death doula registry** that allows people to find a certified/practicing death doula near them. Discovery is via both **text search** (country / city) and an **interactive world map** (with radius search via geodata).
 
 ## Tech Stack
-- **Backend:** PHP
-- **Database:** MySQL (`doula` database on localhost:3306, user: `doulaDB`)
-- **Webserver:** Laragon (local dev)
-- **PHP version:** 8.3
+- **Backend:** PHP 8.3
+- **Database:** MySQL — `doula` (local), `doula_prod` (production)
+- **Webserver:** Laragon (local dev), Apache 2.4 on Ubuntu (production)
+- **Frontend:** Bootstrap 5.3, Leaflet 1.9 (map), Tom Select (dropdowns)
+
+---
+
+## Environments
+
+### Local (Laragon)
+- URL: `http://localhost/doula/`
+- DB: `doula` on localhost:3306, user `doulaDB`
+- Apache vhost must set: `SetEnv APP_BASE_URL /doula`
+
+### Production
+- URL: `https://deathdoulamap.com`
+- Alias: `https://deathdoulamap.poolside.se`
+- Server: DigitalOcean droplet at `46.101.109.74`
+- DB: `doula_prod` on localhost, user `doula_prod_user`
+- Web root: `/var/www/deathdoulamap`
+- SSL: Let's Encrypt via certbot, auto-renews, cert at `/etc/letsencrypt/live/deathdoulamap.poolside.se/`
+- Apache vhost configs: `/etc/apache2/sites-available/deathdoulamap.poolside.se.conf` (HTTP→HTTPS redirect) and `deathdoulamap.poolside.se-le-ssl.conf` (HTTPS)
+
+---
+
+## Configuration
+
+### `BASE_URL` / database credentials
+`admin/config.php` reads `APP_BASE_URL` from the environment (falls back to `''`).
+`Database.php` reads `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS` from environment — or from `config.server.php` if that file exists (production only, not in git).
+
+### `config.server.php` (production only, gitignored)
+Lives at `/var/www/deathdoulamap/config.server.php`. Never commit this file.
+```php
+<?php
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'doula_prod');
+define('DB_USER', 'doula_prod_user');
+define('DB_PASS', '...');
+```
+
+---
+
+## Deployment
+
+### First-time setup (already done)
+```bash
+git clone https://github.com/jonassarjan/doula.git /var/www/deathdoulamap
+mkdir /var/www/deathdoulamap/uploads
+chown -R www-data:www-data /var/www/deathdoulamap
+mysql doula_prod < schema.sql
+# create config.server.php manually on server
+```
+
+### Routine deploy
+```bash
+cd /var/www/deathdoulamap
+git pull origin master
+```
+
+### Uploads
+Photo uploads live in `/var/www/deathdoulamap/uploads/` — this directory is gitignored and managed on the server only. Do not commit uploads.
 
 ---
 
@@ -23,10 +81,11 @@ An online **death doula registry** that allows people to find a certified/practi
 |---|---|---|
 | Name | text | |
 | Bio | long text | |
-| Profile photo | single image | file path / URL |
+| Profile photo | single image | file path stored, served from `/uploads/` |
 | Certifications | free text | e.g. "Certified by INELDA 2022" |
 | Years of experience | integer | nullable |
 | Languages spoken | structured list | multiselect in admin (pivot table) |
+| Categories | structured list | multiselect in admin (pivot table) |
 | Email | varchar | nullable |
 | Phone | varchar | nullable |
 | Website / homepage | varchar | nullable |
@@ -35,13 +94,14 @@ An online **death doula registry** that allows people to find a certified/practi
 | Latitude | decimal(10,7) | for map + radius search |
 | Longitude | decimal(10,7) | for map + radius search |
 | Active | boolean | admin can toggle visibility |
+| Pending | boolean | internal flag |
 
 ### Location & Search
 - Single city per doula
-- Text search by **country** and/or **city**
+- Text search by **name**, **country**, and/or **city**, filterable by **category**
 - Geodata (lat/lng) stored per doula for:
   - Plotting on a **world map**
-  - **Radius search** (e.g. within 50 km) via `ST_Distance_Sphere`
+  - **"Nearest doula"** button uses browser geolocation (requires HTTPS)
 
 ### Contact
 - Homepage/website link
@@ -77,6 +137,7 @@ country          VARCHAR(255) NOT NULL
 latitude         DECIMAL(10,7) NOT NULL
 longitude        DECIMAL(10,7) NOT NULL
 is_active        TINYINT(1) NOT NULL DEFAULT 1
+is_pending       TINYINT(1) NOT NULL DEFAULT 0
 created_at       TIMESTAMP
 updated_at       TIMESTAMP
 ```
@@ -84,8 +145,14 @@ updated_at       TIMESTAMP
 ### `languages`
 ```sql
 id    SMALLINT UNSIGNED AUTO_INCREMENT PRIMARY KEY
-name  VARCHAR(100) NOT NULL   -- e.g. "English"
+name  VARCHAR(100) NOT NULL
 code  CHAR(2) NOT NULL        -- ISO 639-1 e.g. "en"
+```
+
+### `categories`
+```sql
+id    TINYINT UNSIGNED AUTO_INCREMENT PRIMARY KEY
+name  VARCHAR(255) NOT NULL
 ```
 
 ### `doula_language` (pivot)
@@ -93,6 +160,13 @@ code  CHAR(2) NOT NULL        -- ISO 639-1 e.g. "en"
 doula_id     BIGINT UNSIGNED NOT NULL  FK -> doulas.id
 language_id  SMALLINT UNSIGNED NOT NULL  FK -> languages.id
 PRIMARY KEY (doula_id, language_id)
+```
+
+### `doula_category` (pivot)
+```sql
+doula_id     BIGINT UNSIGNED NOT NULL  FK -> doulas.id
+category_id  TINYINT UNSIGNED NOT NULL  FK -> categories.id
+PRIMARY KEY (doula_id, category_id)
 ```
 
 ### `admins`
