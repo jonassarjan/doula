@@ -1,5 +1,7 @@
 <?php
 require_once __DIR__ . '/Database.php';
+$countryList = require __DIR__ . '/countries.php';
+$baseUrl = rtrim(getenv('APP_BASE_URL') ?: '', '/');
 
 $name             = trim($_GET['name']    ?? '');
 $country          = trim($_GET['country'] ?? '');
@@ -30,7 +32,7 @@ if (!empty($selectedCats)) {
 }
 
 $doulas = Database::query("
-    SELECT d.id, d.name, d.photo, d.city, d.country,
+    SELECT d.id, d.name, d.photo, d.bio, d.certifications, d.city, d.country,
            d.latitude, d.longitude, d.email, d.phone, d.website,
            d.years_experience,
            GROUP_CONCAT(DISTINCT l.name   ORDER BY l.name   SEPARATOR ', ') AS language_list,
@@ -60,6 +62,8 @@ $mapData = json_encode(
         'cats'   => $d['category_list']  ?? '',
         'photo'  => $d['photo']          ?? '',
         'years'  => $d['years_experience'] ?? '',
+        'bio'    => $d['bio']            ?? '',
+        'certs'  => $d['certifications'] ?? '',
     ], $doulas),
     JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP
 );
@@ -193,6 +197,33 @@ $isFiltered = $name || $country || $city || !empty($selectedCats);
         }
         .lf-popup-links a:hover { background: #f8f9fa; }
 
+        /* --- Locate button (Leaflet control) ------------------------ */
+        .locate-btn {
+            background: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: .82rem;
+            color: #333;
+            white-space: nowrap;
+            box-shadow: 0 1px 5px rgba(0,0,0,.25);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            line-height: 1.4;
+        }
+        .locate-btn:hover { background: #f8f9fa; }
+        .locate-btn:disabled { opacity: .6; cursor: default; }
+        /* User location dot */
+        .user-dot {
+            width: 14px; height: 14px;
+            background: #0d6efd;
+            border: 2px solid #fff;
+            border-radius: 50%;
+            box-shadow: 0 0 0 3px rgba(13,110,253,.35);
+        }
+
         /* --- Mobile ------------------------------------------------- */
         @media (max-width: 767px) {
             html, body { overflow: auto; }
@@ -205,6 +236,7 @@ $isFiltered = $name || $country || $city || !empty($selectedCats);
             .list-panel { width: 100%; }
             .list-scroll { max-height: 50vh; }
             .map-panel  { height: 320px; }
+            #map        { height: 320px; }
             .mobile-toggle { display: flex !important; }
         }
         .mobile-toggle { display: none; }
@@ -227,7 +259,13 @@ $isFiltered = $name || $country || $city || !empty($selectedCats);
                    value="<?= htmlspecialchars($name) ?>">
             <input type="text" name="country" class="form-control form-control-sm"
                    placeholder="Country" style="max-width:130px;"
-                   value="<?= htmlspecialchars($country) ?>">
+                   value="<?= htmlspecialchars($country) ?>"
+                   list="country-options" autocomplete="off">
+            <datalist id="country-options">
+                <?php foreach ($countryList as $c): ?>
+                <option value="<?= htmlspecialchars($c) ?>">
+                <?php endforeach; ?>
+            </datalist>
             <input type="text" name="city" class="form-control form-control-sm"
                    placeholder="City" style="max-width:130px;"
                    value="<?= htmlspecialchars($city) ?>">
@@ -235,7 +273,7 @@ $isFiltered = $name || $country || $city || !empty($selectedCats);
                 <i class="bi bi-search"></i> Search
             </button>
             <?php if ($isFiltered): ?>
-            <a href="/doula/" class="btn btn-sm btn-outline-light">
+            <a href="<?= $baseUrl ?>/" class="btn btn-sm btn-outline-light">
                 <i class="bi bi-x"></i> Clear
             </a>
             <?php endif; ?>
@@ -281,7 +319,7 @@ $isFiltered = $name || $country || $city || !empty($selectedCats);
                 <div class="text-center text-muted py-5">
                     <i class="bi bi-search" style="font-size:2rem;"></i>
                     <p class="mt-2 small">No doulas found for your search.</p>
-                    <a href="/doula/" class="btn btn-sm btn-outline-secondary">Clear filters</a>
+                    <a href="<?= $baseUrl ?>/" class="btn btn-sm btn-outline-secondary">Clear filters</a>
                 </div>
                 <?php else: ?>
                 <?php foreach ($doulas as $d): ?>
@@ -290,7 +328,7 @@ $isFiltered = $name || $country || $city || !empty($selectedCats);
                      onclick="selectDoula(<?= $d['id'] ?>)">
 
                     <?php if ($d['photo']): ?>
-                    <img src="/doula/uploads/<?= htmlspecialchars($d['photo']) ?>"
+                    <img src="<?= $baseUrl ?>/uploads/<?= htmlspecialchars($d['photo']) ?>"
                          class="doula-avatar" alt="">
                     <?php else: ?>
                     <div class="doula-avatar-placeholder"><i class="bi bi-person-fill"></i></div>
@@ -363,6 +401,18 @@ $isFiltered = $name || $country || $city || !empty($selectedCats);
     </div><!-- .content-row -->
 </div><!-- .page-wrapper -->
 
+<!-- Doula profile panel -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="doulaProfile"
+     data-bs-scroll="true" data-bs-backdrop="false"
+     style="width:min(440px,100vw); box-shadow:-4px 0 24px rgba(0,0,0,.15);">
+    <div class="offcanvas-header border-bottom">
+        <h6 class="offcanvas-title fw-semibold" id="doulaProfileTitle"></h6>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body" id="doulaProfileBody"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const doulas  = <?= $mapData ?>;
@@ -432,13 +482,176 @@ function setActiveCard(id) {
     if (card) card.classList.add('active');
 }
 
+let profileOffcanvas = null;
+
 function selectDoula(id) {
     setActiveCard(id);
     const m = markers[id];
-    if (!m) return;
-    map.flyTo(m.getLatLng(), 13, { animate: true, duration: 0.6 });
-    m.openPopup();
+    if (m) {
+        map.flyTo(m.getLatLng(), 13, { animate: true, duration: 0.6 });
+        m.openPopup();
+    }
+
+    const d = doulas.find(x => x.id === id);
+    if (!d) return;
+
+    const photoHtml = d.photo
+        ? `<img src="<?= $baseUrl ?>/uploads/${esc(d.photo)}" class="rounded-circle flex-shrink-0"
+               style="width:72px;height:72px;object-fit:cover;" alt="">`
+        : `<div class="rounded-circle bg-light d-flex align-items-center justify-content-center flex-shrink-0"
+               style="width:72px;height:72px;">
+               <i class="bi bi-person-fill text-secondary" style="font-size:1.8rem;"></i>
+           </div>`;
+
+    const catBadges = d.cats
+        ? d.cats.split(', ').map(c =>
+            `<span class="badge fw-normal" style="font-size:.72rem;background:#e8f0fe;color:#1a56c4;white-space:normal;text-align:left;">${esc(c.trim())}</span>`
+          ).join(' ')
+        : '';
+
+    const langBadges = d.langs
+        ? d.langs.split(', ').map(l =>
+            `<span class="badge bg-light text-dark border fw-normal" style="font-size:.72rem;">${esc(l.trim())}</span>`
+          ).join(' ')
+        : '';
+
+    const contactLinks = [
+        d.website ? `<a href="${esc(d.website)}" target="_blank" rel="noreferrer"
+                        class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-globe2 me-1"></i>Website</a>` : '',
+        d.email   ? `<a href="mailto:${esc(d.email)}"
+                        class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-envelope me-1"></i>Email</a>` : '',
+        d.phone   ? `<a href="tel:${esc(d.phone)}"
+                        class="btn btn-sm btn-outline-secondary">
+                        <i class="bi bi-telephone me-1"></i>Phone</a>` : '',
+    ].filter(Boolean).join('');
+
+    const distHtml = userCoords ? (() => {
+        const km = haversineKm(userCoords.lat, userCoords.lng, d.lat, d.lng);
+        const label = km < 1 ? Math.round(km * 1000) + ' m' : Math.round(km) + ' km';
+        return `<div class="small mb-1" style="color:#0d6efd;"><i class="bi bi-geo-alt-fill me-1"></i>${label} from you</div>`;
+    })() : '';
+
+    document.getElementById('doulaProfileTitle').textContent = d.name;
+
+    document.getElementById('doulaProfileBody').innerHTML = `
+        <div class="d-flex gap-3 align-items-center mb-3">
+            ${photoHtml}
+            <div>
+                <div class="fw-semibold fs-6">${esc(d.name)}</div>
+                <div class="text-muted small">${esc(d.city)}, ${esc(d.country)}</div>
+                ${d.years ? `<div class="text-muted small">${esc(d.years)} year${d.years != 1 ? 's' : ''} experience</div>` : ''}
+                ${distHtml}
+            </div>
+        </div>
+        ${catBadges  ? `<div class="mb-3 d-flex flex-wrap gap-1">${catBadges}</div>`  : ''}
+        ${d.bio ? `
+        <div class="mb-3">
+            <div class="fw-medium small text-uppercase text-muted mb-1" style="letter-spacing:.05em;">About</div>
+            <div style="white-space:pre-line;font-size:.92rem;line-height:1.6;">${esc(d.bio)}</div>
+        </div>` : ''}
+        ${d.certs ? `
+        <div class="mb-3">
+            <div class="fw-medium small text-uppercase text-muted mb-1" style="letter-spacing:.05em;">Certifications</div>
+            <div style="white-space:pre-line;font-size:.9rem;">${esc(d.certs)}</div>
+        </div>` : ''}
+        ${langBadges ? `
+        <div class="mb-3">
+            <div class="fw-medium small text-uppercase text-muted mb-1" style="letter-spacing:.05em;">Languages</div>
+            <div class="d-flex flex-wrap gap-1">${langBadges}</div>
+        </div>` : ''}
+        ${contactLinks ? `<div class="d-flex flex-wrap gap-2 mt-2">${contactLinks}</div>` : ''}
+    `;
+
+    if (!profileOffcanvas) {
+        profileOffcanvas = new bootstrap.Offcanvas(document.getElementById('doulaProfile'));
+    }
+    profileOffcanvas.show();
 }
+
+// --- Nearest doula feature --------------------------------------------
+let userCoords = null;
+let userMarker = null;
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180)
+            * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function findNearestDoula() {
+    if (!navigator.geolocation) {
+        alert('Geolocation is not supported by your browser.');
+        return;
+    }
+    const btn = document.getElementById('locateBtn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Locating…'; }
+
+    navigator.geolocation.getCurrentPosition(function(pos) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-geo-alt-fill"></i> Nearest doula'; }
+
+        userCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+
+        // Place / update user location marker
+        const icon = L.divIcon({ className: '', html: '<div class="user-dot"></div>', iconSize: [14, 14], iconAnchor: [7, 7] });
+        if (userMarker) map.removeLayer(userMarker);
+        userMarker = L.marker([userCoords.lat, userCoords.lng], { icon, zIndexOffset: 1000 })
+            .addTo(map)
+            .bindPopup('<strong>You are here</strong>');
+
+        if (!doulas.length) { alert('No doulas are listed yet.'); return; }
+
+        // Find nearest by great-circle distance
+        let nearest = null, minKm = Infinity;
+        doulas.forEach(d => {
+            const km = haversineKm(userCoords.lat, userCoords.lng, d.lat, d.lng);
+            if (km < minKm) { minKm = km; nearest = d; }
+        });
+
+        // Fit map to show both points
+        map.fitBounds(
+            L.latLngBounds([[userCoords.lat, userCoords.lng], [nearest.lat, nearest.lng]]).pad(0.25)
+        );
+
+        // Open profile and highlight card
+        selectDoula(nearest.id);
+        const card = document.querySelector(`.doula-card[data-id="${nearest.id}"]`);
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    }, function(err) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-geo-alt-fill"></i> Nearest doula'; }
+        const msgs = {
+            1: 'Permission denied. If you\'re on HTTP (not HTTPS), browsers block geolocation — try accessing the site via https:// or localhost.',
+            2: 'Position unavailable. Your device could not determine its location right now.',
+            3: 'Request timed out. Try again.',
+        };
+        alert(msgs[err.code] || 'Geolocation error: ' + err.message);
+    });
+}
+
+// Add locate button as a Leaflet map control
+const LocateControl = L.Control.extend({
+    onAdd: function() {
+        const btn = L.DomUtil.create('button', 'locate-btn');
+        btn.id    = 'locateBtn';
+        btn.title = 'Find the nearest doula to my current location';
+        btn.innerHTML = '<i class="bi bi-geo-alt-fill"></i> Nearest doula';
+        L.DomEvent.on(btn, 'click', function(e) {
+            L.DomEvent.stopPropagation(e);
+            findNearestDoula();
+        });
+        return btn;
+    }
+});
+new LocateControl({ position: 'topleft' }).addTo(map);
+
+// --- Invalidate map size on orientation change ------------------------
+window.addEventListener('orientationchange', () => setTimeout(() => map.invalidateSize(), 200));
 
 // --- Mobile view toggle -----------------------------------------------
 function mobileView(view) {
